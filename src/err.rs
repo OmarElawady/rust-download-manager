@@ -2,7 +2,6 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum ManagerErrorKind {
-    ConnectionError,
     IO,
     InvalidAddress,
     DecodingError,
@@ -28,7 +27,6 @@ impl fmt::Display for ManagerErrorKind {
                 ManagerErrorKind::DecodingError => "decoding error".to_string(),
                 ManagerErrorKind::InvalidAddress => "invalid address error".to_string(),
                 ManagerErrorKind::IO => "io error".to_string(),
-                ManagerErrorKind::ConnectionError => "connection error".to_string(),
                 ManagerErrorKind::DatabaseError => "db error".to_string(),
                 ManagerErrorKind::ChannelError => "channel error".to_string(),
             }
