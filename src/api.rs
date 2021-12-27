@@ -7,31 +7,23 @@ use std::fmt;
 use std::fmt::Display;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net;
-#[derive(Serialize, Deserialize, Debug)]
-pub enum CommandKind {
-    Add,
-    List,
-    Info,
-    Ack,
-    Error,
-}
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AddCommand {
     pub url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ErrorCommand {
     pub msg: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InfoCommand {
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InfoResponse {
     pub name: String,
     pub url: String,
@@ -70,13 +62,12 @@ impl From<&JobState> for InfoResponse {
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ListResponse {
-    pub entries: Vec<InfoResponse>,
-}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListResponse(Vec<InfoResponse>);
+
 impl Display for ListResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        for e in self.entries.iter() {
+        for e in self.0.iter() {
             write!(f, "- {}:", e.name)?;
             write!(f, " [{}]", e.state)?;
             if e.total != 0 {
@@ -95,18 +86,18 @@ impl From<Vec<JobState>> for ListResponse {
         for e in v.iter() {
             entries.push(InfoResponse::from(e));
         }
-        Self { entries }
+        ListResponse(entries)
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ListCommand;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AckCommand;
 
 // TODO: this should be an enum
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
     Add(AddCommand),
     List(ListCommand),

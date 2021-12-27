@@ -2,9 +2,19 @@ mod api;
 mod daemon;
 mod db;
 mod err;
+mod http;
+mod rest;
 mod types;
+mod client;
+mod daemon1;
+mod state;
 
+#[macro_use]
+extern crate rocket;
 use crate::api::{AckCommand, AddCommand, ErrorCommand, InfoCommand, ListCommand, Message};
+use crate::http::HTTPClient;
+use crate::http::HTTPListener;
+use crate::http::HTTPState;
 use clap::{App, Arg, SubCommand};
 use daemon::ManagerDaemon;
 
@@ -23,7 +33,7 @@ async fn client_command(addr: &str, cmd: &Message) -> Result<(), err::ManagerErr
     Ok(())
 }
 
-#[tokio::main]
+#[rocket::main]
 async fn main() -> Result<(), err::ManagerError> {
     let matches = App::new("manager")
         .author("Omar Elawady (omarelawad11998@gmail.com)")
@@ -76,30 +86,41 @@ async fn main() -> Result<(), err::ManagerError> {
     let addr = matches.value_of("addr").unwrap();
     match matches.subcommand() {
         ("add", Some(matches)) => {
-            client_command(
-                addr,
-                &Message::Add(AddCommand {
-                    url: matches.value_of("url").unwrap().into(),
-                }),
-            )
-            .await?;
+            HTTPClient::new("http://localhost:8000")
+                .await?
+                .add(matches.value_of("url").unwrap().into())
+                .await?;
+            print!("ok")
         }
         ("list", _) => {
-            client_command(addr, &Message::List(ListCommand)).await?;
+            print!(
+                "{}",
+                HTTPClient::new("http://localhost:8000")
+                    .await?
+                    .list()
+                    .await?
+            )
         }
         ("info", Some(matches)) => {
-            client_command(
-                addr,
-                &Message::Info(InfoCommand {
-                    name: matches.value_of("name").unwrap().into(),
-                }),
+            print!(
+                "{}",
+                HTTPClient::new("http://localhost:8000")
+                    .await?
+                    .info(matches.value_of("name").unwrap().into())
+                    .await?
             )
-            .await?;
         }
         _ => {
+            let (job_sender, job_receiver) = async_channel::unbounded();
+            let http_listener = HTTPListener { ch: job_receiver };
             let workers = matches.value_of("workers").unwrap().parse().unwrap();
-            let d = ManagerDaemon::new(addr, workers)?;
-            d.serve().await?
+            let d = ManagerDaemon::new(workers, http_listener)?;
+            tokio::spawn(d.serve()); // TODO: revise waiting and such
+            rocket::build()
+                .mount("/api/v1/jobs/", routes![rest::list, rest::info, rest::add])
+                .manage(HTTPState { ch: job_sender })
+                .launch()
+                .await?;
         }
     }
     Ok(())

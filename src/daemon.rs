@@ -1,12 +1,14 @@
+use crate::err::ManagerErrorKind::ChannelError;
 use super::api;
-use super::api::ManagerApi;
 use super::api::Message;
 use super::err::ManagerError;
 use crate::api::InfoResponse;
 use crate::api::ListResponse;
 use crate::db::Database;
+use crate::http::ManagerStream;
 use crate::AckCommand;
 use crate::ErrorCommand;
+use crate::HTTPListener;
 use async_channel;
 use reqwest;
 use std::fmt;
@@ -15,10 +17,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio;
-use tokio::net;
-use tokio::sync::Mutex;
 use tokio::time;
 use url::Url;
 pub struct DownloadJob {
@@ -63,17 +62,17 @@ pub struct JobState {
 
 pub struct DownloadWorker {
     job_receiver: async_channel::Receiver<DownloadJob>,
-    state_sender: async_channel::Sender<JobState>,
+    state_client: StateClient,
 }
 
 impl DownloadWorker {
     fn new(
         job_receiver: async_channel::Receiver<DownloadJob>,
-        state_sender: async_channel::Sender<JobState>,
+        state_sender: async_channel::Sender<StateMessage>,
     ) -> Self {
         DownloadWorker {
             job_receiver,
-            state_sender,
+            state_client: StateClient{ ch: state_sender },
         }
     }
 
@@ -82,23 +81,27 @@ impl DownloadWorker {
             self.download(&msg).await
         }
     }
-
+    async fn update_state(&self, state: JobState) {
+        let res = self
+        .state_client
+        .update(state).await;
+        if let Err(e) = res {
+            println!("failed to update state {}", e)
+        }
+    }
     async fn download(&self, job: &DownloadJob) {
         let req = reqwest::get(job.url.clone()).await;
         if let Err(e) = req {
             // ignore error
-            let _ = self
-                .state_sender
-                .send(JobState {
-                    name: job.name.clone(),
-                    url: job.url.clone(),
-                    path: job.file_path.to_str().unwrap().into(), // is this unwrap safe?
-                    downloaded: 0,
-                    total: 0,
-                    state: State::Failed,
-                    msg: e.to_string(),
-                })
-                .await;
+            self.update_state(JobState{
+                name: job.name.clone(),
+                url: job.url.clone(),
+                path: job.file_path.to_str().unwrap().into(), // is this unwrap safe?
+                downloaded: 0,
+                total: 0,
+                state: State::Failed,
+                msg: e.to_string(),
+            }).await;
             return;
         }
         let mut state = JobState {
@@ -110,19 +113,19 @@ impl DownloadWorker {
             state: State::Active,
             msg: "".into(),
         };
-        let _ = self.state_sender.send(state.clone()).await;
+        self.update_state(state.clone()).await;
         let mut req = req.unwrap();
         let headers = req.headers();
         if let Some(len_str) = headers.get("Content-Length") {
             let len = len_str.to_str().unwrap_or("0").parse().unwrap_or(0);
             state.total = len;
-            let _ = self.state_sender.send(state.clone()).await;
+            self.update_state(state.clone()).await;
         }
         let file = File::create(job.file_path.clone());
         if let Err(e) = file {
             state.msg = format!("failed to create file: {}", e.to_string());
             state.state = State::Failed;
-            let _ = self.state_sender.send(state.clone()).await;
+            self.update_state(state.clone()).await;
             return;
         }
         let mut file = file.unwrap();
@@ -134,26 +137,26 @@ impl DownloadWorker {
                     Some(chunk) => match file.write_all(&chunk) {
                         Ok(_) => {
                             state.downloaded += chunk.len() as u64;
-                            let _ = self.state_sender.send(state.clone()).await;
+                            self.update_state(state.clone()).await;
                         }
                         Err(e) => {
                             state.msg =
                                 format!("failed to write downloaded chunk: {}", e.to_string());
                             state.state = State::Failed;
-                            let _ = self.state_sender.send(state.clone()).await;
+                            self.update_state(state.clone()).await;
                             return;
                         }
                     },
                     None => {
                         state.state = State::Done;
-                        let _ = self.state_sender.send(state.clone()).await;
+                        self.update_state(state.clone()).await;
                         return;
                     }
                 },
                 Err(e) => {
                     state.msg = format!("failed to download chunk: {}", e.to_string());
                     state.state = State::Failed;
-                    let _ = self.state_sender.send(state.clone()).await;
+                    self.update_state(state.clone()).await;
                     return;
                 }
             }
@@ -162,58 +165,51 @@ impl DownloadWorker {
 }
 
 pub struct ManagerDaemon {
-    server: net::TcpListener,
+    server: HTTPListener,
     job_sender: async_channel::Sender<DownloadJob>,
-    state_sender: async_channel::Sender<JobState>,
-    db: Arc<Mutex<Database>>,
+    state_client: StateClient,
 }
 
 impl ManagerDaemon {
     // TODO: refactor into a config struct
-    pub fn new(addr: &str, workers: u32) -> Result<Self, ManagerError> {
-        let addr = addr.parse()?;
-        let socket = net::TcpSocket::new_v4()?;
-        socket.bind(addr)?;
-
-        let listener = socket.listen(1024)?;
+    pub fn new(workers: u32, listener: HTTPListener) -> Result<Self, ManagerError> {
         let (job_sender, job_receiver) = async_channel::unbounded();
         let (state_sender, state_receiver) = async_channel::unbounded();
-        let db = Arc::new(Mutex::new(Database::new("/tmp/test.db")?));
+        let db = Database::new("/tmp/test.db")?;
         for _ in 0..workers {
             tokio::spawn(DownloadWorker::new(job_receiver.clone(), state_sender.clone()).work());
         }
-        tokio::spawn(StateDaemon::new(state_receiver, db.clone()).work());
+        tokio::spawn(StateDaemon::new(state_receiver, db).work());
         Ok(ManagerDaemon {
             server: listener,
             job_sender,
-            state_sender,
-            db,
+            state_client: StateClient{ch: state_sender},
         })
     }
-    pub async fn serve(&self) -> Result<(), ManagerError> {
+    pub async fn serve(self) -> Result<(), ManagerError> {
         // a single loop handling all the connections
         loop {
-            let socket = self.server.accept().await;
-            if let Err(e) = socket {
+            let stream = self.server.next().await;
+            if let Err(e) = stream {
                 println!("couldn't accept connection {}", e);
                 time::sleep(time::Duration::from_secs(1)).await;
                 continue;
             }
-            let mut api = ManagerApi::from(socket.unwrap().0);
-            let cmd = match self.handle(&mut api).await {
+            let mut stream = stream.unwrap();
+            let cmd = match self.handle(&mut stream).await {
                 Err(e) => Message::Error(api::ErrorCommand { msg: e.to_string() }),
                 Ok(msg) => msg,
             };
-            if let Err(e) = api.write(&cmd).await {
+            if let Err(e) = stream.write(&cmd).await {
                 println!("error sending response {:?}: {}", cmd, e);
             }
-            if let Err(e) = api.shutdown().await {
+            if let Err(e) = stream.shutdown().await {
                 // TODO: better logging
                 println!("error shutting down client socket {}", e);
             }
         }
     }
-    async fn handle(&self, api: &mut ManagerApi) -> Result<Message, ManagerError> {
+    async fn handle(&self, api: &mut ManagerStream) -> Result<Message, ManagerError> {
         let cmd = api.read().await?;
         match cmd {
             Message::Add(c) => {
@@ -237,6 +233,7 @@ impl ManagerDaemon {
         }
     }
     async fn add(&self, url: &str) -> Result<Message, ManagerError> {
+        print!("url is: {}", url);
         let u = Url::parse(url)?;
         let segments = u.path_segments();
         let mut name = "unnamed";
@@ -250,8 +247,8 @@ impl ManagerDaemon {
             file_path: file_path.clone(),
             url: url.to_string(),
         };
-        self.state_sender
-            .send(JobState {
+        self.state_client
+            .update(JobState {
                 name: name.into(),
                 url: url.into(),
                 path: file_path.to_str().unwrap().into(), // TODO: unsafe wrap?
@@ -266,30 +263,144 @@ impl ManagerDaemon {
     }
     async fn list(&self) -> Result<Message, ManagerError> {
         Ok(Message::ListResponse(ListResponse::from(
-            self.db.lock().await.list_states()?,
+            self.state_client.list().await?,
         )))
     }
     async fn info(&self, name: &str) -> Result<Message, ManagerError> {
         Ok(Message::InfoResponse(InfoResponse::from(
-            &self.db.lock().await.get_state(name)?,
+            &self.state_client.get(name).await?,
         )))
     }
 }
+#[derive(Debug)]
+pub struct StateUpdateMessage {
+    job_state: JobState,
+    response_channel: async_channel::Sender<StateMessage>,
+}
+#[derive(Debug)]
+pub struct StateGetMessage {
+    name: String,
+    response_channel: async_channel::Sender<StateMessage>,
+}
+#[derive(Debug)]
+pub struct StateListMessage {
+    response_channel: async_channel::Sender<StateMessage>,
+}
 
+pub struct StateClient {
+    ch: async_channel::Sender<StateMessage>,
+}
+impl StateClient {
+    pub async fn get(&self, name: &str) -> Result<JobState, ManagerError> {
+        let (s, r) = async_channel::unbounded();
+        self.ch.send(StateMessage::Get(StateGetMessage{
+            name: name.into(),
+            response_channel: s
+        })).await?;
+        while let Ok(resp) = r.recv().await {
+            return match resp {
+                StateMessage::Error(e) => Err(e),
+                StateMessage::GetResponse(r) => Ok(r),
+                _ => Err(ManagerError {
+                    kind: ChannelError,
+                    msg: format!("expected a state from the state daemon, got {:?}", resp).into(),
+                })
+            };
+        }
+        Err(ManagerError {
+            kind: ChannelError,
+            msg: "couldn't get the response from the state daemon".into(),
+        })
+    }
+    pub async fn update(&self, job_state: JobState) -> Result<(), ManagerError> {
+        let (s, r) = async_channel::unbounded();
+        self.ch.send(StateMessage::Update(StateUpdateMessage{
+            job_state,
+            response_channel: s
+        })).await?;
+        while let Ok(resp) = r.recv().await {
+            return match resp {
+                StateMessage::Error(e) => Err(e),
+                StateMessage::Ack => Ok(()),
+                _ => Err(ManagerError {
+                    kind: ChannelError,
+                    msg: format!("expected an ack from the state daemon, got {:?}", resp).into(),
+                })
+            };
+        }
+        Err(ManagerError {
+            kind: ChannelError,
+            msg: "couldn't get the response from the state daemon".into(),
+        })
+    }
+    pub async fn list(&self) -> Result<Vec<JobState>, ManagerError> {
+        let (s, r) = async_channel::unbounded();
+        self.ch.send(StateMessage::List(StateListMessage{
+            response_channel: s
+        })).await?;
+        while let Ok(resp) = r.recv().await {
+
+            return match resp {
+                StateMessage::Error(e) => Err(e),
+                StateMessage::ListResponse(r) => Ok(r),
+                _ => Err(ManagerError {
+                    kind: ChannelError,
+                    msg: format!("expected a list of states from the state daemon, got {:?}", resp).into(),
+                })
+            };
+        }
+        Err(ManagerError {
+            kind: ChannelError,
+            msg: "couldn't get the response from the state daemon".into(),
+        })
+    }
+}
+#[derive(Debug)]
+pub enum StateMessage {
+    Update(StateUpdateMessage),
+    Get(StateGetMessage),
+    List(StateListMessage),
+    GetResponse(JobState),
+    ListResponse(Vec<JobState>),
+    Ack,
+    Error(ManagerError)
+}
 pub struct StateDaemon {
-    state_receiver: async_channel::Receiver<JobState>,
-    db: Arc<Mutex<Database>>,
+    state_receiver: async_channel::Receiver<StateMessage>,
+    db: Database,
 }
 
 impl StateDaemon {
-    fn new(state_receiver: async_channel::Receiver<JobState>, db: Arc<Mutex<Database>>) -> Self {
+    fn new(state_receiver: async_channel::Receiver<StateMessage>, db: Database) -> Self {
         return StateDaemon { state_receiver, db };
     }
-
     async fn work(self) {
         while let Ok(state) = self.state_receiver.recv().await {
-            if let Err(e) = self.db.lock().await.update_state(state) {
-                println!("error updating state in the db {}", e)
+            match state {
+                StateMessage::Update(msg) => {
+                    let res = self.db.update_state(msg.job_state);
+                    let _ = match res {
+                        Err(e) => msg.response_channel.send(StateMessage::Error(e)).await,
+                        Ok(v) => msg.response_channel.send(StateMessage::Ack).await
+                    };
+                },
+                StateMessage::Get(msg) => {
+                    let res = self.db.get_state(&msg.name);
+                    let _ = match res {
+                        Err(e) => msg.response_channel.send(StateMessage::Error(e)).await,
+                        Ok(v) => msg.response_channel.send(StateMessage::GetResponse(v)).await
+                    };
+                },
+                StateMessage::List(msg) => {
+                    let res = self.db.list_states();
+                    let _ = match res {
+                        Err(e) => msg.response_channel.send(StateMessage::Error(e)).await,
+                        Ok(v) => msg.response_channel.send(StateMessage::ListResponse(v)).await
+                    };
+                },
+                _ => {
+                    println!("state daemon got an unexpected message {:?}", state)
+                }
             }
         }
         println!("state daemon exited, oh noooo")

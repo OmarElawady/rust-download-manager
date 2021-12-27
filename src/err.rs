@@ -4,9 +4,11 @@ use std::fmt;
 pub enum ManagerErrorKind {
     IO,
     InvalidAddress,
+    InvalidMessage,
     DecodingError,
     DatabaseError,
     ChannelError,
+    HTTPError,
 }
 #[derive(Debug)]
 pub struct ManagerError {
@@ -29,6 +31,8 @@ impl fmt::Display for ManagerErrorKind {
                 ManagerErrorKind::IO => "io error".to_string(),
                 ManagerErrorKind::DatabaseError => "db error".to_string(),
                 ManagerErrorKind::ChannelError => "channel error".to_string(),
+                ManagerErrorKind::InvalidMessage => "invalid message".to_string(),
+                ManagerErrorKind::HTTPError => "http error".to_string(),
             }
         )
     }
@@ -82,8 +86,8 @@ impl From<url::ParseError> for ManagerError {
         };
     }
 }
-impl From<async_channel::SendError<crate::daemon::JobState>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon::JobState>) -> Self {
+impl From<async_channel::SendError<crate::daemon::StateMessage>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::daemon::StateMessage>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
@@ -95,6 +99,39 @@ impl From<async_channel::SendError<crate::daemon::DownloadJob>> for ManagerError
     fn from(err: async_channel::SendError<crate::daemon::DownloadJob>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
+            msg: err.to_string(),
+        };
+    }
+}
+impl From<async_channel::SendError<crate::api::Message>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::api::Message>) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::ChannelError,
+            msg: err.to_string(),
+        };
+    }
+}
+
+impl From<async_channel::SendError<crate::http::ManagerStream>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::http::ManagerStream>) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::ChannelError,
+            msg: err.to_string(),
+        };
+    }
+}
+impl From<rocket::Error> for ManagerError {
+    fn from(err: rocket::Error) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::HTTPError,
+            msg: err.to_string(),
+        };
+    }
+}
+impl From<reqwest::Error> for ManagerError {
+    fn from(err: reqwest::Error) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::HTTPError,
             msg: err.to_string(),
         };
     }
