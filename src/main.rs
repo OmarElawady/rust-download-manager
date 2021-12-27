@@ -1,10 +1,10 @@
 mod api;
 mod daemon;
+mod db;
 mod err;
 mod types;
-mod db;
 
-use crate::api::{Message, AddCommand, ListCommand, InfoCommand, AckCommand, ErrorCommand};
+use crate::api::{AckCommand, AddCommand, ErrorCommand, InfoCommand, ListCommand, Message};
 use clap::{App, Arg, SubCommand};
 use daemon::ManagerDaemon;
 
@@ -78,21 +78,21 @@ async fn main() -> Result<(), err::ManagerError> {
         ("add", Some(matches)) => {
             client_command(
                 addr,
-                &Message::Add(AddCommand{url: matches.value_of("url").unwrap().into()}),
+                &Message::Add(AddCommand {
+                    url: matches.value_of("url").unwrap().into(),
+                }),
             )
             .await?;
         }
         ("list", _) => {
-            client_command(
-                addr,
-                &Message::List(ListCommand),
-            )
-            .await?;
+            client_command(addr, &Message::List(ListCommand)).await?;
         }
         ("info", Some(matches)) => {
             client_command(
                 addr,
-                &Message::Info(InfoCommand{name: matches.value_of("name").unwrap().into()}),
+                &Message::Info(InfoCommand {
+                    name: matches.value_of("name").unwrap().into(),
+                }),
             )
             .await?;
         }

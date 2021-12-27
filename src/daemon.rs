@@ -1,25 +1,25 @@
-use crate::ErrorCommand;
-use crate::api::ListResponse;
-use crate::api::InfoResponse;
-use std::path::Path;
-use crate::AckCommand;
-use std::sync::Arc;
-use crate::db::Database;
-use tokio::sync::Mutex;
-use std::fmt::Display;
-use super::api::Message;
 use super::api;
 use super::api::ManagerApi;
+use super::api::Message;
 use super::err::ManagerError;
-use tokio::net;
-use tokio::time;
-use std::path::PathBuf;
-use tokio;
+use crate::api::InfoResponse;
+use crate::api::ListResponse;
+use crate::db::Database;
+use crate::AckCommand;
+use crate::ErrorCommand;
 use async_channel;
 use reqwest;
+use std::fmt;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::prelude::*;
-use std::fmt;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio;
+use tokio::net;
+use tokio::sync::Mutex;
+use tokio::time;
 use url::Url;
 pub struct DownloadJob {
     name: String,
@@ -33,11 +33,13 @@ pub enum State {
     Pending,
     Failed,
     Done,
-    Unknown
+    Unknown,
 }
 impl Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", 
+        write!(
+            f,
+            "{}",
             match *self {
                 State::Active => "Active",
                 State::Pending => "Pending",
@@ -56,17 +58,23 @@ pub struct JobState {
     pub downloaded: u64,
     pub total: u64,
     pub state: State,
-    pub msg: String
+    pub msg: String,
 }
 
 pub struct DownloadWorker {
     job_receiver: async_channel::Receiver<DownloadJob>,
-    state_sender: async_channel::Sender<JobState>
+    state_sender: async_channel::Sender<JobState>,
 }
 
 impl DownloadWorker {
-    fn new(job_receiver: async_channel::Receiver<DownloadJob>, state_sender: async_channel::Sender<JobState>) -> Self {
-        DownloadWorker{job_receiver, state_sender}
+    fn new(
+        job_receiver: async_channel::Receiver<DownloadJob>,
+        state_sender: async_channel::Sender<JobState>,
+    ) -> Self {
+        DownloadWorker {
+            job_receiver,
+            state_sender,
+        }
     }
 
     async fn work(self) {
@@ -79,25 +87,28 @@ impl DownloadWorker {
         let req = reqwest::get(job.url.clone()).await;
         if let Err(e) = req {
             // ignore error
-            let _ = self.state_sender.send(JobState{
-                name: job.name.clone(),
-                url: job.url.clone(),
-                path: job.file_path.to_str().unwrap().into(), // is this unwrap safe?    
-                downloaded: 0,
-                total: 0,
-                state: State::Failed,
-                msg: e.to_string()
-            }).await;
-            return
+            let _ = self
+                .state_sender
+                .send(JobState {
+                    name: job.name.clone(),
+                    url: job.url.clone(),
+                    path: job.file_path.to_str().unwrap().into(), // is this unwrap safe?
+                    downloaded: 0,
+                    total: 0,
+                    state: State::Failed,
+                    msg: e.to_string(),
+                })
+                .await;
+            return;
         }
-        let mut state = JobState{
+        let mut state = JobState {
             name: job.name.clone(),
             url: job.url.clone(),
             path: job.file_path.to_str().unwrap().into(), // is this unwrap safe?
             downloaded: 0,
             total: 0,
             state: State::Active,
-            msg: "".into()
+            msg: "".into(),
         };
         let _ = self.state_sender.send(state.clone()).await;
         let mut req = req.unwrap();
@@ -112,41 +123,38 @@ impl DownloadWorker {
             state.msg = format!("failed to create file: {}", e.to_string());
             state.state = State::Failed;
             let _ = self.state_sender.send(state.clone()).await;
-            return
+            return;
         }
         let mut file = file.unwrap();
         loop {
             let chunk = req.chunk().await;
             // TODO: there must be a way to chain this
             match chunk {
-                Ok(chunk) => {
-                    match chunk {
-                        Some(chunk) => {
-                            match file.write_all(&chunk) {
-                                Ok(_) => {
-                                    state.downloaded += chunk.len() as u64;
-                                    let _ = self.state_sender.send(state.clone()).await;
-                                },
-                                Err(e) => {
-                                    state.msg = format!("failed to write downloaded chunk: {}", e.to_string());
-                                    state.state = State::Failed;
-                                    let _ = self.state_sender.send(state.clone()).await;
-                                    return
-                                }
-                            }
-                        },
-                        None => {
-                            state.state = State::Done;
+                Ok(chunk) => match chunk {
+                    Some(chunk) => match file.write_all(&chunk) {
+                        Ok(_) => {
+                            state.downloaded += chunk.len() as u64;
                             let _ = self.state_sender.send(state.clone()).await;
-                            return
                         }
+                        Err(e) => {
+                            state.msg =
+                                format!("failed to write downloaded chunk: {}", e.to_string());
+                            state.state = State::Failed;
+                            let _ = self.state_sender.send(state.clone()).await;
+                            return;
+                        }
+                    },
+                    None => {
+                        state.state = State::Done;
+                        let _ = self.state_sender.send(state.clone()).await;
+                        return;
                     }
                 },
                 Err(e) => {
                     state.msg = format!("failed to download chunk: {}", e.to_string());
                     state.state = State::Failed;
                     let _ = self.state_sender.send(state.clone()).await;
-                    return
+                    return;
                 }
             }
         }
@@ -157,7 +165,7 @@ pub struct ManagerDaemon {
     server: net::TcpListener,
     job_sender: async_channel::Sender<DownloadJob>,
     state_sender: async_channel::Sender<JobState>,
-    db: Arc<Mutex<Database>>
+    db: Arc<Mutex<Database>>,
 }
 
 impl ManagerDaemon {
@@ -175,7 +183,12 @@ impl ManagerDaemon {
             tokio::spawn(DownloadWorker::new(job_receiver.clone(), state_sender.clone()).work());
         }
         tokio::spawn(StateDaemon::new(state_receiver, db.clone()).work());
-        Ok(ManagerDaemon { server: listener, job_sender, state_sender, db})
+        Ok(ManagerDaemon {
+            server: listener,
+            job_sender,
+            state_sender,
+            db,
+        })
     }
     pub async fn serve(&self) -> Result<(), ManagerError> {
         // a single loop handling all the connections
@@ -188,7 +201,7 @@ impl ManagerDaemon {
             }
             let mut api = ManagerApi::from(socket.unwrap().0);
             let cmd = match self.handle(&mut api).await {
-                Err(e) => Message::Error(api::ErrorCommand{msg: e.to_string()}),
+                Err(e) => Message::Error(api::ErrorCommand { msg: e.to_string() }),
                 Ok(msg) => msg,
             };
             if let Err(e) = api.write(&cmd).await {
@@ -217,7 +230,9 @@ impl ManagerDaemon {
             }
             _ => {
                 println!("thanks for the acknowledgment, don't expect it though");
-                Ok(Message::Error(ErrorCommand{msg: format!("unexpected command {:?}", cmd).into()}))
+                Ok(Message::Error(ErrorCommand {
+                    msg: format!("unexpected command {:?}", cmd).into(),
+                }))
             }
         }
     }
@@ -233,37 +248,42 @@ impl ManagerDaemon {
             name: name.into(),
             // TODO: make configurable
             file_path: file_path.clone(),
-            url: url.to_string()
+            url: url.to_string(),
         };
-        self.state_sender.send(JobState{
-            name: name.into(),
-            url: url.into(),
-            path: file_path.to_str().unwrap().into(), // TODO: unsafe wrap?
-            downloaded: 0,
-            total: 0,
-            state: State::Pending,
-            msg: "".into()
-        }).await?;
+        self.state_sender
+            .send(JobState {
+                name: name.into(),
+                url: url.into(),
+                path: file_path.to_str().unwrap().into(), // TODO: unsafe wrap?
+                downloaded: 0,
+                total: 0,
+                state: State::Pending,
+                msg: "".into(),
+            })
+            .await?;
         self.job_sender.send(job).await?;
-        Ok(Message::Ack(AckCommand{}))
+        Ok(Message::Ack(AckCommand {}))
     }
     async fn list(&self) -> Result<Message, ManagerError> {
-        Ok(Message::ListResponse(ListResponse::from(self.db.lock().await.list_states()?)))
+        Ok(Message::ListResponse(ListResponse::from(
+            self.db.lock().await.list_states()?,
+        )))
     }
     async fn info(&self, name: &str) -> Result<Message, ManagerError> {
-        Ok(Message::InfoResponse(InfoResponse::from(&self.db.lock().await.get_state(name)?)))
+        Ok(Message::InfoResponse(InfoResponse::from(
+            &self.db.lock().await.get_state(name)?,
+        )))
     }
 }
 
-
 pub struct StateDaemon {
     state_receiver: async_channel::Receiver<JobState>,
-    db: Arc<Mutex<Database>>
+    db: Arc<Mutex<Database>>,
 }
 
 impl StateDaemon {
     fn new(state_receiver: async_channel::Receiver<JobState>, db: Arc<Mutex<Database>>) -> Self {
-        return StateDaemon{state_receiver, db}
+        return StateDaemon { state_receiver, db };
     }
 
     async fn work(self) {

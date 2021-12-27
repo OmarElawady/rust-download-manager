@@ -1,12 +1,12 @@
-use std::fmt::Display;
 use crate::daemon::JobState;
 use crate::err::ManagerError;
 use serde;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
+use std::fmt::Display;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net;
-use std::fmt;
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CommandKind {
     Add,
@@ -18,17 +18,17 @@ pub enum CommandKind {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddCommand {
-    pub url: String
+    pub url: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ErrorCommand {
-    pub msg: String
+    pub msg: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InfoCommand {
-    pub name: String
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -39,10 +39,10 @@ pub struct InfoResponse {
     pub downloaded: u64,
     pub total: u64,
     pub state: String, // should it be State?
-    pub msg: String
+    pub msg: String,
 }
 impl Display for InfoResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result { 
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "name: {}\n", self.name)?;
         write!(f, "url: {}\n", self.url)?;
         write!(f, "path: {}\n", self.path)?;
@@ -58,8 +58,8 @@ impl Display for InfoResponse {
     }
 }
 impl From<&JobState> for InfoResponse {
-    fn from(s: &JobState) -> Self { 
-        InfoResponse{
+    fn from(s: &JobState) -> Self {
+        InfoResponse {
             name: s.name.clone(),
             url: s.url.clone(),
             path: s.path.clone(),
@@ -72,10 +72,10 @@ impl From<&JobState> for InfoResponse {
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
-    pub entries: Vec<InfoResponse>
+    pub entries: Vec<InfoResponse>,
 }
 impl Display for ListResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result { 
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         for e in self.entries.iter() {
             write!(f, "- {}:", e.name)?;
             write!(f, " [{}]", e.state)?;
@@ -90,12 +90,12 @@ impl Display for ListResponse {
     }
 }
 impl From<Vec<JobState>> for ListResponse {
-    fn from(v: Vec<JobState>) -> Self { 
+    fn from(v: Vec<JobState>) -> Self {
         let mut entries = Vec::new();
         for e in v.iter() {
             entries.push(InfoResponse::from(e));
         }
-        Self{entries}
+        Self { entries }
     }
 }
 
@@ -114,7 +114,7 @@ pub enum Message {
     Info(InfoCommand),
     InfoResponse(InfoResponse),
     Ack(AckCommand),
-    Error(ErrorCommand)
+    Error(ErrorCommand),
 }
 
 pub struct ManagerApi {
