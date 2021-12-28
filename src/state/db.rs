@@ -1,6 +1,6 @@
-use crate::daemon::JobState;
-use crate::daemon::State;
 use crate::err::{ManagerError, ManagerErrorKind};
+use crate::types::JobState;
+use crate::types::State;
 use rusqlite::Connection;
 use std::str;
 pub struct Database {
@@ -18,6 +18,7 @@ impl rusqlite::types::FromSql for State {
                     "Active" => Ok(Self::Active),
                     "Pending" => Ok(Self::Pending),
                     "Failed" => Ok(Self::Failed),
+                    "Cancelled" => Ok(Self::Cancelled),
                     "Done" => Ok(Self::Done),
                     _ => Ok(Self::Unknown),
                 }
@@ -87,10 +88,10 @@ impl Database {
             })
         })?;
         for job in jobs {
-            return Ok(job.unwrap()); // is this unwrap safe?
+            return Ok(job?);
         }
         Err(ManagerError {
-            kind: ManagerErrorKind::DatabaseError,
+            kind: ManagerErrorKind::DownloadJobNotFound,
             msg: format!("{} not found", name),
         })
     }
@@ -112,7 +113,7 @@ impl Database {
         })?;
         let mut vs = Vec::new();
         for job in jobs {
-            vs.push(job.unwrap()); // is this unwrap safe?
+            vs.push(job?);
         }
         Ok(vs)
     }

@@ -1,14 +1,39 @@
-pub struct DownloadInfo {
+use std::fmt;
+
+#[derive(Clone, Debug)]
+pub struct JobState {
     pub name: String,
     pub url: String,
-    pub remaining: Option<u64>,
-    pub downloaded: Option<u64>,
-    pub status: Status,
+    pub path: String,
+    pub downloaded: u64,
+    pub total: u64,
+    pub state: State,
+    pub msg: String,
 }
 
-pub enum Status {
+#[derive(Clone, Debug)]
+pub enum State {
+    Active,
+    Pending,
+    Cancelled,
     Failed,
     Done,
-    Pending,
-    Active,
+    Unknown,
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match *self {
+                State::Active => "Active",
+                State::Pending => "Pending",
+                State::Failed => "Failed",
+                State::Cancelled => "Cancelled",
+                State::Done => "Done",
+                State::Unknown => "Unknown",
+            }
+        )
+    }
 }

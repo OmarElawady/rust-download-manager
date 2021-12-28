@@ -1,6 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum ManagerErrorKind {
     IO,
     InvalidAddress,
@@ -9,8 +10,10 @@ pub enum ManagerErrorKind {
     DatabaseError,
     ChannelError,
     HTTPError,
+    DownloadJobNotFound,
+    ParseIntError
 }
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ManagerError {
     pub kind: ManagerErrorKind,
     pub msg: String,
@@ -33,6 +36,8 @@ impl fmt::Display for ManagerErrorKind {
                 ManagerErrorKind::ChannelError => "channel error".to_string(),
                 ManagerErrorKind::InvalidMessage => "invalid message".to_string(),
                 ManagerErrorKind::HTTPError => "http error".to_string(),
+                ManagerErrorKind::DownloadJobNotFound => "download job not found".to_string(),
+                ManagerErrorKind::ParseIntError => "error parsing integer".to_string(),
             }
         )
     }
@@ -86,8 +91,8 @@ impl From<url::ParseError> for ManagerError {
         };
     }
 }
-impl From<async_channel::SendError<crate::daemon::StateMessage>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon::StateMessage>) -> Self {
+impl From<async_channel::SendError<crate::state::types::StateMessage>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::state::types::StateMessage>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
@@ -95,16 +100,16 @@ impl From<async_channel::SendError<crate::daemon::StateMessage>> for ManagerErro
     }
 }
 
-impl From<async_channel::SendError<crate::daemon::DownloadJob>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon::DownloadJob>) -> Self {
+impl From<async_channel::SendError<crate::daemon1::types::DownloadJob>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::daemon1::types::DownloadJob>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
         };
     }
 }
-impl From<async_channel::SendError<crate::api::Message>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::api::Message>) -> Self {
+impl From<async_channel::SendError<crate::daemon1::types::Message>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::daemon1::types::Message>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
@@ -112,14 +117,24 @@ impl From<async_channel::SendError<crate::api::Message>> for ManagerError {
     }
 }
 
-impl From<async_channel::SendError<crate::http::ManagerStream>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::http::ManagerStream>) -> Self {
+impl From<async_channel::SendError<crate::daemon1::stream::ManagerStream>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::daemon1::stream::ManagerStream>) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
         };
     }
 }
+
+impl From<tokio::sync::watch::error::SendError<bool>> for ManagerError {
+    fn from(err: tokio::sync::watch::error::SendError<bool>) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::ChannelError,
+            msg: err.to_string(),
+        };
+    }
+}
+
 impl From<rocket::Error> for ManagerError {
     fn from(err: rocket::Error) -> Self {
         return ManagerError {
@@ -128,10 +143,19 @@ impl From<rocket::Error> for ManagerError {
         };
     }
 }
+
 impl From<reqwest::Error> for ManagerError {
     fn from(err: reqwest::Error) -> Self {
         return ManagerError {
             kind: ManagerErrorKind::HTTPError,
+            msg: err.to_string(),
+        };
+    }
+}
+impl From<std::num::ParseIntError> for ManagerError {
+    fn from(err: std::num::ParseIntError) -> Self {
+        return ManagerError {
+            kind: ManagerErrorKind::ParseIntError,
             msg: err.to_string(),
         };
     }

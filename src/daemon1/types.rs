@@ -1,16 +1,26 @@
-use crate::daemon::JobState;
 use crate::err::ManagerError;
-use serde;
+use crate::types::JobState;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
 use std::fmt::Display;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net;
+use std::path::PathBuf;
+use tokio::sync::watch;
+
+pub struct DownloadJob {
+    pub name: String,
+    pub url: String,
+    pub file_path: PathBuf,
+    pub cancel_channel: watch::Receiver<bool>
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AddCommand {
     pub url: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CancelCommand {
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -96,7 +106,6 @@ pub struct ListCommand;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AckCommand;
 
-// TODO: this should be an enum
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
     Add(AddCommand),
@@ -104,42 +113,7 @@ pub enum Message {
     ListResponse(ListResponse),
     Info(InfoCommand),
     InfoResponse(InfoResponse),
+    Cancel(CancelCommand),
     Ack(AckCommand),
-    Error(ErrorCommand),
-}
-
-pub struct ManagerApi {
-    endpoint: net::TcpStream,
-}
-
-impl From<net::TcpStream> for ManagerApi {
-    fn from(endpoint: net::TcpStream) -> Self {
-        ManagerApi { endpoint }
-    }
-}
-// rename to ManagerStream
-impl ManagerApi {
-    pub async fn new_client(addr: &str) -> Result<Self, ManagerError> {
-        Ok(Self::from(net::TcpStream::connect(addr).await?))
-    }
-
-    pub async fn write(&mut self, cmd: &Message) -> Result<(), ManagerError> {
-        let x = bincode::serialize(&cmd).unwrap();
-        self.endpoint.write_u64(x.len() as u64).await?;
-        self.endpoint.write_all(&x).await?;
-        Ok(())
-    }
-
-    pub async fn read(&mut self) -> Result<Message, ManagerError> {
-        let len = self.endpoint.read_u64().await?;
-        let mut buf = vec![0; len as usize];
-        self.endpoint.read_exact(&mut buf).await?;
-        let cmd = bincode::deserialize(&buf)?;
-        Ok(cmd)
-    }
-
-    pub async fn shutdown(&mut self) -> Result<(), ManagerError> {
-        self.endpoint.shutdown().await?;
-        Ok(())
-    }
+    Error(ManagerError),
 }
