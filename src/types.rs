@@ -1,7 +1,7 @@
 use std::fmt;
 
 #[derive(Clone, Debug)]
-pub struct JobState {
+pub struct JobInfo {
     pub name: String,
     pub url: String,
     pub path: String,
@@ -11,7 +11,7 @@ pub struct JobState {
     pub msg: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum State {
     Active,
     Pending,

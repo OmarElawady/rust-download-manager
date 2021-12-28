@@ -9,10 +9,10 @@ pub struct ManagerStream {
 
 impl ManagerStream {
     pub fn new(msg: Message, response_channel: Sender<Message>) -> Self {
-        return ManagerStream {
+        ManagerStream {
             msg,
             response_channel,
-        };
+        }
     }
     pub async fn read(&mut self) -> Result<Message, ManagerError> {
         Ok(self.msg.clone())

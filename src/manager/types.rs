@@ -1,5 +1,5 @@
 use crate::err::ManagerError;
-use crate::types::JobState;
+use crate::types::JobInfo;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
@@ -11,16 +11,19 @@ pub struct DownloadJob {
     pub name: String,
     pub url: String,
     pub file_path: PathBuf,
-    pub cancel_channel: watch::Receiver<bool>
+    pub cancel_channel: watch::Receiver<CancelInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AddCommand {
     pub url: String,
+    pub name: Option<String>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CancelCommand {
     pub name: String,
+    pub forget: bool,
+    pub delete: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -45,22 +48,22 @@ pub struct InfoResponse {
 }
 impl Display for InfoResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name: {}\n", self.name)?;
-        write!(f, "url: {}\n", self.url)?;
-        write!(f, "path: {}\n", self.path)?;
-        write!(f, "downloaded: {}\n", self.downloaded)?;
+        writeln!(f, "name: {}", self.name)?;
+        writeln!(f, "url: {}", self.url)?;
+        writeln!(f, "path: {}", self.path)?;
+        writeln!(f, "downloaded: {}", self.downloaded)?;
         if self.total != 0 {
-            write!(f, "total: {}\n", self.total)?;
+            writeln!(f, "total: {}", self.total)?;
         }
-        write!(f, "state: {}\n", self.state)?;
-        if self.msg != "" {
-            write!(f, "msg: {}\n", self.msg)?;
+        writeln!(f, "state: {}", self.state)?;
+        if !self.msg.is_empty() {
+            writeln!(f, "msg: {}", self.msg)?;
         }
         Ok(())
     }
 }
-impl From<&JobState> for InfoResponse {
-    fn from(s: &JobState) -> Self {
+impl From<&JobInfo> for InfoResponse {
+    fn from(s: &JobInfo) -> Self {
         InfoResponse {
             name: s.name.clone(),
             url: s.url.clone(),
@@ -85,13 +88,13 @@ impl Display for ListResponse {
             } else {
                 write!(f, " [{}]", e.downloaded)?;
             }
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         Ok(())
     }
 }
-impl From<Vec<JobState>> for ListResponse {
-    fn from(v: Vec<JobState>) -> Self {
+impl From<Vec<JobInfo>> for ListResponse {
+    fn from(v: Vec<JobInfo>) -> Self {
         let mut entries = Vec::new();
         for e in v.iter() {
             entries.push(InfoResponse::from(e));
@@ -116,4 +119,16 @@ pub enum Message {
     Cancel(CancelCommand),
     Ack(AckCommand),
     Error(ManagerError),
+}
+
+#[derive(Debug)]
+pub struct CancelInfo {
+    pub cancel: bool,
+    pub delete: bool,
+}
+
+impl Display for CancelInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "cancel: {}, delete: {}", self.cancel, self.delete)
+    }
 }

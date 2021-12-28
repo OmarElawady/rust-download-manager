@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub enum ManagerErrorKind {
     IO,
     InvalidAddress,
@@ -11,7 +11,9 @@ pub enum ManagerErrorKind {
     ChannelError,
     HTTPError,
     DownloadJobNotFound,
-    ParseIntError
+    DownloadJobNameAlreadyExist,
+    ParseIntError,
+    ParseBoolError,
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ManagerError {
@@ -38,125 +40,130 @@ impl fmt::Display for ManagerErrorKind {
                 ManagerErrorKind::HTTPError => "http error".to_string(),
                 ManagerErrorKind::DownloadJobNotFound => "download job not found".to_string(),
                 ManagerErrorKind::ParseIntError => "error parsing integer".to_string(),
+                ManagerErrorKind::ParseBoolError => "errorr parsing bool".to_string(),
+                ManagerErrorKind::DownloadJobNameAlreadyExist =>
+                    "download job name already exist".to_string(),
             }
         )
     }
 }
 impl From<std::io::Error> for ManagerError {
     fn from(err: std::io::Error) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::IO,
             msg: err.to_string(),
-        };
+        }
     }
 }
 impl From<std::net::AddrParseError> for ManagerError {
     fn from(err: std::net::AddrParseError) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::InvalidAddress,
             msg: err.to_string(),
-        };
+        }
     }
 }
 impl From<std::string::FromUtf8Error> for ManagerError {
     fn from(err: std::string::FromUtf8Error) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::DecodingError,
             msg: err.to_string(),
-        };
-    }
-}
-impl From<std::boxed::Box<bincode::ErrorKind>> for ManagerError {
-    fn from(err: std::boxed::Box<bincode::ErrorKind>) -> Self {
-        return ManagerError {
-            kind: ManagerErrorKind::DecodingError,
-            msg: err.to_string(),
-        };
+        }
     }
 }
 
 impl From<rusqlite::Error> for ManagerError {
     fn from(err: rusqlite::Error) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::DatabaseError,
             msg: err.to_string(),
-        };
+        }
     }
 }
 impl From<url::ParseError> for ManagerError {
     fn from(err: url::ParseError) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::InvalidAddress,
             msg: err.to_string(),
-        };
+        }
     }
 }
-impl From<async_channel::SendError<crate::state::types::StateMessage>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::state::types::StateMessage>) -> Self {
-        return ManagerError {
+impl From<async_channel::SendError<crate::jobs::types::JobMessage>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::jobs::types::JobMessage>) -> Self {
+        ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
-        };
-    }
-}
-
-impl From<async_channel::SendError<crate::daemon1::types::DownloadJob>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon1::types::DownloadJob>) -> Self {
-        return ManagerError {
-            kind: ManagerErrorKind::ChannelError,
-            msg: err.to_string(),
-        };
-    }
-}
-impl From<async_channel::SendError<crate::daemon1::types::Message>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon1::types::Message>) -> Self {
-        return ManagerError {
-            kind: ManagerErrorKind::ChannelError,
-            msg: err.to_string(),
-        };
+        }
     }
 }
 
-impl From<async_channel::SendError<crate::daemon1::stream::ManagerStream>> for ManagerError {
-    fn from(err: async_channel::SendError<crate::daemon1::stream::ManagerStream>) -> Self {
-        return ManagerError {
+impl From<async_channel::SendError<crate::manager::types::DownloadJob>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::manager::types::DownloadJob>) -> Self {
+        ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
-        };
+        }
+    }
+}
+impl From<async_channel::SendError<crate::manager::types::Message>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::manager::types::Message>) -> Self {
+        ManagerError {
+            kind: ManagerErrorKind::ChannelError,
+            msg: err.to_string(),
+        }
     }
 }
 
-impl From<tokio::sync::watch::error::SendError<bool>> for ManagerError {
-    fn from(err: tokio::sync::watch::error::SendError<bool>) -> Self {
-        return ManagerError {
+impl From<async_channel::SendError<crate::manager::stream::ManagerStream>> for ManagerError {
+    fn from(err: async_channel::SendError<crate::manager::stream::ManagerStream>) -> Self {
+        ManagerError {
             kind: ManagerErrorKind::ChannelError,
             msg: err.to_string(),
-        };
+        }
+    }
+}
+
+impl From<tokio::sync::watch::error::SendError<crate::manager::types::CancelInfo>>
+    for ManagerError
+{
+    fn from(err: tokio::sync::watch::error::SendError<crate::manager::types::CancelInfo>) -> Self {
+        ManagerError {
+            kind: ManagerErrorKind::ChannelError,
+            msg: format!("error sending cancelation to the worker {:?}", err),
+        }
     }
 }
 
 impl From<rocket::Error> for ManagerError {
     fn from(err: rocket::Error) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::HTTPError,
             msg: err.to_string(),
-        };
+        }
     }
 }
 
 impl From<reqwest::Error> for ManagerError {
     fn from(err: reqwest::Error) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::HTTPError,
             msg: err.to_string(),
-        };
+        }
     }
 }
 impl From<std::num::ParseIntError> for ManagerError {
     fn from(err: std::num::ParseIntError) -> Self {
-        return ManagerError {
+        ManagerError {
             kind: ManagerErrorKind::ParseIntError,
             msg: err.to_string(),
-        };
+        }
+    }
+}
+impl From<std::str::ParseBoolError> for ManagerError {
+    fn from(err: std::str::ParseBoolError) -> Self {
+        ManagerError {
+            kind: ManagerErrorKind::ParseBoolError,
+            msg: err.to_string(),
+        }
     }
 }

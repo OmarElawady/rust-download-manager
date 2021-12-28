@@ -1,66 +1,14 @@
-use crate::daemon1::client::DaemonClient;
-use crate::daemon1::types::{AckCommand, InfoResponse, ListResponse};
-use crate::err::ManagerError;
+use super::types::{Add, ApiResponse, Cancel, Error};
 use crate::err::ManagerErrorKind;
-use rocket::http::{ContentType, Status};
-use rocket::response;
-use rocket::response::{Responder, Response};
-use rocket::serde::{json::Json, Deserialize, Serialize};
-use rocket::Request;
-use rocket::State;
-use std::fmt;
-#[derive(Serialize, Deserialize)]
-pub struct Add {
-    url: String,
-}
+use crate::manager::client::ManagerClient;
+use crate::manager::types::{AckCommand, InfoResponse, ListResponse};
+use rocket::http::Status;
+use rocket::serde::json::Json;
+use rocket::{Request, State};
 
-#[derive(Serialize, Deserialize)]
-pub enum Error {
-    Error(String),
-}
-
-impl From<ManagerError> for Error {
-    fn from(e: ManagerError) -> Self {
-        Error::Error(e.to_string())
-    }
-}
-
-impl From<&str> for Error {
-    fn from(e: &str) -> Self {
-        Error::Error(e.into())
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        let Error::Error(e) = self;
-        write!(f, "{}", e)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ApiResponse<T>
-where
-    T: Serialize,
-{
-    json: Json<T>,
-    status: Status,
-}
-
-impl<'r, T: Serialize> Responder<'r, 'r> for ApiResponse<T> {
-    fn respond_to(self, req: &Request) -> response::Result<'r> {
-        Response::build_from(self.json.respond_to(&req)?)
-            .status(self.status)
-            .header(ContentType::JSON)
-            .ok()
-    }
-}
-
-// TODO: error handling
 #[get("/")]
 pub async fn list(
-    state: &State<DaemonClient>,
+    state: &State<ManagerClient>,
 ) -> Result<ApiResponse<ListResponse>, ApiResponse<Error>> {
     match state.list().await {
         Ok(v) => Ok(ApiResponse {
@@ -76,7 +24,7 @@ pub async fn list(
 
 #[get("/<name>")]
 pub async fn info(
-    state: &State<DaemonClient>,
+    state: &State<ManagerClient>,
     name: &str,
 ) -> Result<ApiResponse<InfoResponse>, ApiResponse<Error>> {
     match state.info(name).await {
@@ -97,12 +45,13 @@ pub async fn info(
     }
 }
 
-#[delete("/<name>")]
+#[delete("/<name>", format = "application/json", data = "<msg>")]
 pub async fn cancel(
-    state: &State<DaemonClient>,
+    state: &State<ManagerClient>,
     name: &str,
+    msg: Json<Cancel>,
 ) -> Result<ApiResponse<AckCommand>, ApiResponse<Error>> {
-    match state.cancel(name).await {
+    match state.cancel(name, msg.forget, msg.delete).await {
         Ok(v) => Ok(ApiResponse {
             json: Json(v),
             status: Status::Ok,
@@ -122,10 +71,10 @@ pub async fn cancel(
 
 #[post("/", format = "application/json", data = "<msg>")]
 pub async fn add(
-    state: &State<DaemonClient>,
+    state: &State<ManagerClient>,
     msg: Json<Add>,
 ) -> Result<ApiResponse<AckCommand>, ApiResponse<Error>> {
-    match state.add(&msg.url).await {
+    match state.add(&msg.url, msg.name.as_deref()).await {
         Ok(v) => Ok(ApiResponse {
             json: Json(v),
             status: Status::Created,

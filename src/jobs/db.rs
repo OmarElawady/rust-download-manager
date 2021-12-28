@@ -1,6 +1,5 @@
 use crate::err::{ManagerError, ManagerErrorKind};
-use crate::types::JobState;
-use crate::types::State;
+use crate::types::{JobInfo, State};
 use rusqlite::Connection;
 use std::str;
 pub struct Database {
@@ -13,7 +12,7 @@ impl rusqlite::types::FromSql for State {
         match v {
             rusqlite::types::ValueRef::Text(v) => {
                 match str::from_utf8(v)
-                    .or_else(|e| Err(rusqlite::types::FromSqlError::Other(Box::new(e))))?
+                    .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))?
                 {
                     "Active" => Ok(Self::Active),
                     "Pending" => Ok(Self::Pending),
@@ -46,10 +45,10 @@ impl Database {
         Ok(Database { conn })
     }
 
-    pub fn update_state(&self, state: JobState) -> Result<(), ManagerError> {
+    pub fn update_state(&self, state: JobInfo) -> Result<(), ManagerError> {
         self.conn.execute(
-            "insert or replace into jobs (name, url, path, downloaded, total, state, msg)
-            values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO jobs (name, url, path, downloaded, total, state, msg)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             [
                 state.name,
                 state.url,
@@ -62,22 +61,27 @@ impl Database {
         )?;
         Ok(())
     }
+    pub fn update_job_state(&self, name: &str, state: State) -> Result<(), ManagerError> {
+        self.conn.execute(
+            "UPDATE jobs SET state = ?2 WHERE name = ?1",
+            [name, &state.to_string()],
+        )?;
+        Ok(())
+    }
 
-    // pub fn delete_state(&self, name: &str) -> Result<(), ManagerError> {
-    //     self.conn.execute(
-    //         "delete jobs where name=?1",
-    //         [name],
-    //     )?;
-    //     Ok(())
-    // }
+    pub fn delete_job(&self, name: &str) -> Result<(), ManagerError> {
+        self.conn
+            .execute("DELETE FROM jobs WHERE name=?1", [name])?;
+        Ok(())
+    }
 
-    pub fn get_state(&self, name: &str) -> Result<JobState, ManagerError> {
+    pub fn get_job(&self, name: &str) -> Result<JobInfo, ManagerError> {
         let mut stmt = self.conn.prepare(
-            "select name, url, path, downloaded, total, state, msg from jobs where name = ?1",
+            "SELECT name, url, path, downloaded, total, state, msg FROM jobs WHERE name = ?1",
         )?;
 
-        let jobs = stmt.query_map([name], |row| {
-            Ok(JobState {
+        let mut jobs = stmt.query_map([name], |row| {
+            Ok(JobInfo {
                 name: row.get(0)?,
                 url: row.get(1)?,
                 path: row.get(2)?,
@@ -87,7 +91,7 @@ impl Database {
                 msg: row.get(6)?,
             })
         })?;
-        for job in jobs {
+        if let Some(job) = jobs.next() {
             return Ok(job?);
         }
         Err(ManagerError {
@@ -95,13 +99,13 @@ impl Database {
             msg: format!("{} not found", name),
         })
     }
-    pub fn list_states(&self) -> Result<Vec<JobState>, ManagerError> {
+    pub fn list_jobs(&self) -> Result<Vec<JobInfo>, ManagerError> {
         let mut stmt = self
             .conn
-            .prepare("select name, url, path, downloaded, total, state, msg from jobs")?;
+            .prepare("SELECT name, url, path, downloaded, total, state, msg FROM jobs")?;
 
         let jobs = stmt.query_map([], |row| {
-            Ok(JobState {
+            Ok(JobInfo {
                 name: row.get(0)?,
                 url: row.get(1)?,
                 path: row.get(2)?,
